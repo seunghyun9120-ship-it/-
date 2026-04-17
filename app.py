@@ -20,11 +20,11 @@ MODEL = "llama-3.1-8b-instant"
 
 # --- 초기 페르소나 설정 ---
 FIXED_PERSONAS = [
-    {"id":"aria",   "name":"Aria",   "color":"#E53935","emoji":"🔥","desc":"현실주의","personality":"냉혹한 현실주의자. 효율과 결과 중심.","active":True},
-    {"id":"marcus", "name":"Marcus", "color":"#1565C0","emoji":"🏛️","desc":"보수주의","personality":"전통과 질서 중시. 권위적 말투.","active":True},
-    {"id":"zoe",    "name":"Zoe",    "color":"#2E7D32","emoji":"✊","desc":"진보주의","personality":"혁명과 변화 갈망. 열정적 말투.","active":True},
-    {"id":"jin",    "name":"Jin",    "color":"#7B1FA2","emoji":"🎯","desc":"허무주의","personality":"모든 것은 무의미함. 냉소적 말투.","active":False},
-    {"id":"mia",    "name":"Mia",    "color":"#E65100","emoji":"⚡","desc":"낙관주의","personality":"기술 만능주의. 에너지 넘치는 말투.","active":False},
+    {"id":"aria",   "name":"Aria",   "color":"#E53935","emoji":"🔥","desc":"현실주의","personality":"냉혹한 현실주의자. 도덕이나 감정은 약자의 핑계라고 생각하며 오직 결과, 효율, 데이터만을 판단 기준으로 삼습니다. 말투는 매우 단호하고 차갑습니다.","active":True},
+    {"id":"marcus", "name":"Marcus", "color":"#1565C0","emoji":"🏛️","desc":"보수주의","personality":"강경 보수주의자. 수천 년간 검증된 전통, 가족, 국가의 질서를 중시합니다. 변화보다는 안정을 강조하며 권위적이고 훈계조의 말투를 사용합니다.","active":True},
+    {"id":"zoe",    "name":"Zoe",    "color":"#2E7D32","emoji":"✊","desc":"진보주의","personality":"급진적 진보주의자. 현재 체제는 기득권의 착취 구조라고 믿으며 파괴적인 혁신과 평등을 갈망합니다. 열정적이고 때로는 공격적인 선동가 스타일의 말투를 씁니다.","active":True},
+    {"id":"jin",    "name":"Jin",    "color":"#7B1FA2","emoji":"🎯","desc":"허무주의","personality":"극단적 허무주의자. 진보도 보수도 결국 인간의 자기만족일 뿐이며 모든 논쟁은 무의미하다고 봅니다. 감정이 메마른 건조하고 냉소적인 말투가 특징입니다.","active":False},
+    {"id":"mia",    "name":"Mia",    "color":"#E65100","emoji":"⚡","desc":"낙관주의","personality":"극단적 낙관주의자이자 기술 신봉자. 인류의 모든 고통은 기술로 해결될 것이라 믿으며 에너지가 넘치고 매우 빠른 속도로 희망찬 이야기를 쏟아냅니다.","active":False},
 ]
 
 # --- 세션 관리 ---
@@ -51,20 +51,19 @@ def ask_one(persona, history, idx=0):
 # --- UI 설정 ---
 st.set_page_config(page_title="AI 커스텀 채팅", layout="centered")
 
-# CSS로 스타일링
 st.markdown("""
 <style>
-    .persona-card { text-align: center; border: 1px solid #ddd; border-radius: 10px; padding: 10px; background: #f9f9f9; }
+    .persona-card { text-align: center; border: 1px solid #ddd; border-radius: 10px; padding: 10px; background: #f9f9f9; height: 140px; }
     .persona-desc { font-size: 0.7rem; color: #666; margin-bottom: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("⚡ AI 단체 채팅방")
 
-# --- 1. 대화 상대 선택 및 설명 ---
+# --- 1. 대화 상대 선택 ---
 st.subheader("👥 대화 상대 선택")
-cols = st.columns(len(st.session_state.personas))
-for i, p in enumerate(st.session_state.personas):
+cols = st.columns(len(st.session_state.personas[:5])) # 기본 5명만 상단 카드 표시
+for i, p in enumerate(st.session_state.personas[:5]):
     with cols[i]:
         st.markdown(f"""
             <div class="persona-card">
@@ -77,9 +76,19 @@ for i, p in enumerate(st.session_state.personas):
             st.session_state.personas[i]["active"] = not p["active"]
             st.rerun()
 
+# 사용자 추가 캐릭터가 있다면 아래에 별도로 표시
+if len(st.session_state.personas) > 5:
+    st.write("👤 추가된 캐릭터")
+    extra_cols = st.columns(5)
+    for i, p in enumerate(st.session_state.personas[5:]):
+        with extra_cols[i % 5]:
+            if st.button(f"{p['emoji']} {p['name']}", key=f"p_extra_{i}", type="primary" if p["active"] else "secondary", use_container_width=True):
+                st.session_state.personas[i+5]["active"] = not p["active"]
+                st.rerun()
+
 st.divider()
 
-# --- 2. 메인 화면에 캐릭터 추가 기능 ---
+# --- 2. 캐릭터 추가 기능 ---
 with st.expander("➕ 새로운 대화 상대 추가하기", expanded=False):
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -95,8 +104,6 @@ with st.expander("➕ 새로운 대화 상대 추가하기", expanded=False):
                 "id": new_name.lower(), "name": new_name, "color": "#555", "emoji": new_emoji,
                 "desc": new_desc, "personality": new_pers, "active": True
             })
-            st.success(f"{new_name}이(가) 대화에 합류했습니다!")
-            time.sleep(0.5)
             st.rerun()
 
 st.divider()
@@ -109,13 +116,20 @@ for turn in st.session_state.history:
         with st.chat_message(p_name, avatar=p_data["emoji"]):
             st.write(f"**{p_name}**: {ans}")
 
-# --- 4. 입력창 및 설정 ---
+# --- 4. 사이드바: 상세 설정 및 성격 조회 ---
 with st.sidebar:
     st.header("⚙️ 상세 설정")
+    
+    with st.expander("🔍 기본 캐릭터 성격 상세보기"):
+        for p in FIXED_PERSONAS:
+            st.markdown(f"**{p['emoji']} {p['name']} ({p['desc']})**")
+            st.caption(p['personality'])
+            st.divider()
+
     if st.button("🔄 전체 대화 초기화", use_container_width=True):
         st.session_state.history = []
         st.rerun()
-    st.info("모델: llama-3.1-8b-instant (고속)")
+    st.info(f"모델: {MODEL}")
 
 if prompt := st.chat_input("메시지를 입력하세요..."):
     active_p = [p for p in st.session_state.personas if p["active"]]
