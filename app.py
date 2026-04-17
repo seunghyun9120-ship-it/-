@@ -1,10 +1,10 @@
 import streamlit as st
-import os, json, datetime, re
+import os, json, datetime, re, time
 from openai import OpenAI
 from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 
-# 라이브러리 체크 및 로드 (최신 버전 대응)
+# 라이브러리 체크
 try:
     from duckduckgo_search import DDGS
     DDG_AVAILABLE = True
@@ -19,7 +19,7 @@ except ImportError:
 
 load_dotenv()
 
-# --- API KEY 로드 (Streamlit Cloud Secrets 대응) ---
+# --- API KEY 설정 (Streamlit Secrets 우선) ---
 if "GROQ_API_KEY" in st.secrets:
     api_key = st.secrets["GROQ_API_KEY"]
 else:
@@ -41,52 +41,36 @@ FIXED_PERSONAS = [
     {"id":"mia",    "name":"Mia",    "color":"#E65100","emoji":"⚡","desc":"극단적 낙관주의자","personality":"극단적 낙관주의자이자 기술 신봉자. AI와 기술이 모든 문제를 해결한다고 믿음. 말투는 에너지 넘치고 빠름.","fixed":True,"active":True},
 ]
 
-# --- 세션 초기화 ---
+# --- 세션 관리 ---
 if "personas" not in st.session_state:
     st.session_state.personas = [dict(p) for p in FIXED_PERSONAS]
 if "history" not in st.session_state: st.session_state.history = []
 if "input_key" not in st.session_state: st.session_state.input_key = 0
-if "debate_mode" not in st.session_state: st.session_state.debate_mode = False
-if "fact_filter_on" not in st.session_state: st.session_state.fact_filter_on = True
 
-# --- 웹 검색 (최신 DDGS 대응) ---
+# --- 데이터 엔진 ---
 def web_search(query):
     if not DDG_AVAILABLE: return ""
     try:
         with DDGS() as ddgs:
-            # 최신 라이브러리 문법으로 수정
             results = [r for r in ddgs.text(query, max_results=5)]
-            if not results: return ""
-            return "\n".join([f"[{r.get('published', '')[:10]}] {r.get('body', '')}" for r in results])
+            return "\n".join([f"[{r.get('body', '')[:200]}]" for r in results])
     except: return ""
 
 def wikipedia_search(query):
     if not REQUESTS_AVAILABLE: return ""
     try:
         r = req.get(f"https://ko.wikipedia.org/api/rest_v1/page/summary/{req.utils.quote(query)}", timeout=5).json()
-        if "extract" in r: return f"[Wikipedia] {r.get('title','')}: {r['extract'][:500]}"
-    except: pass
-    return ""
+        return f"Wiki: {r.get('extract','')[:300]}" if "extract" in r else ""
+    except: return ""
 
-def collect_all_data(query):
-    today = f"오늘 날짜: {datetime.datetime.now().strftime('%Y년 %m월 %d일')}"
-    with ThreadPoolExecutor(max_workers=2) as ex:
-        f_web = ex.submit(web_search, query)
-        f_wiki = ex.submit(wikipedia_search, query)
-        web, wiki = f_web.result(), f_wiki.result()
+# --- 핵심: AI 응답 (순차적 요청으로 429 방지) ---
+def ask_one(persona, history, web_data="", idx=0):
+    # 각 요청 사이에 짧은 간격을 두어 Rate Limit 회피
+    time.sleep(idx * 0.6) 
     
-    parts = [today]
-    if wiki: parts.append(wiki)
-    if web:  parts.append(web)
-    return "\n\n".join(parts)
-
-# --- AI 응답 로직 ---
-def ask_one(persona, history, web_data="", debate_ctx=""):
     system = (f"당신은 {persona['name']}입니다. {persona['personality']}\n"
-              f"3~4문장 한국어 구어체로만 답변하세요. 영어 사용 금지.\n"
-              f"제공된 데이터가 있다면 그 내용을 바탕으로 당신의 성향에 맞춰 답변하세요.\n"
-              f"[참고 데이터]\n{web_data}\n"
-              f"[토론 문맥]\n{debate_ctx}")
+              f"3~4문장 한국어 구어체로만. 영어 금지. 제공된 데이터를 성향껏 해석하세요.\n"
+              f"[참고 데이터] {web_data}")
     
     messages = [{"role":"system","content":system}]
     for turn in history[-3:]:
@@ -98,57 +82,68 @@ def ask_one(persona, history, web_data="", debate_ctx=""):
         res = client.chat.completions.create(model=MODEL, messages=messages, temperature=0.8)
         return persona["name"], res.choices[0].message.content
     except Exception as e:
-        return persona["name"], f"응답 오류: {str(e)[:50]}"
+        if "429" in str(e): return persona["name"], "⏳ (서버 과부하로 잠시 쉬는 중입니다. 잠시 후 다시 시도해주세요.)"
+        return persona["name"], f"오류 발생: {str(e)[:30]}"
 
-def run_chat(history, question):
-    web_data = collect_all_data(question)
-    active = [p for p in st.session_state.personas if p["active"]]
-    
-    with ThreadPoolExecutor(max_workers=len(active)) as ex:
-        futures = [ex.submit(ask_one, p, history, web_data, "") for p in active]
-        responses = dict([f.result() for f in futures])
-    
-    return responses
+# --- UI 설정 ---
+st.set_page_config(page_title="AI 토론장", layout="centered")
+st.markdown("""
+<style>
+    .stApp { background: #fff; }
+    .ai-name { font-size:0.75rem; font-weight:700; margin-top:10px; }
+    .bubble-ai { background:#F1F3F5; border-radius:4px 15px 15px 15px; padding:10px 15px; font-size:0.92rem; line-height:1.6; }
+    .card-desc { font-size:0.6rem; color:#888; margin-top:2px; }
+</style>
+""", unsafe_allow_html=True)
 
-# --- UI (간소화 및 최적화) ---
-st.set_page_config(page_title="AI 대화방", layout="centered")
-
+# 사이드바
 with st.sidebar:
     st.header("⚙️ 설정")
-    st.session_state.debate_mode = st.toggle("⚔️ 토론 모드", st.session_state.debate_mode)
-    if st.button("🔄 대화 초기화"):
-        st.session_state.history = []
-        st.rerun()
+    if st.button("🔄 대화 내용 초기화", use_container_width=True):
+        st.session_state.history = []; st.rerun()
 
 st.title("💬 AI 단체 채팅")
 
-# 캐릭터 선택 UI
+# 캐릭터 선택 카드
+st.markdown('<p style="font-size:0.8rem; font-weight:700; color:#888;">대화 상대 선택</p>', unsafe_allow_html=True)
 cols = st.columns(len(st.session_state.personas))
 for i, p in enumerate(st.session_state.personas):
     with cols[i]:
-        st.markdown(f"### {p['emoji']}")
-        if st.button(p["name"], type="primary" if p["active"] else "secondary", key=f"btn_{i}"):
-            st.session_state.personas[i]["active"] = not p["active"]
-            st.rerun()
+        is_on = p["active"]
+        st.markdown(f"""
+            <div style="background:{'#EBF5FF' if is_on else '#F8F9FA'}; border:2px solid {p['color'] if is_on else '#EEE'}; 
+                        border-radius:12px; padding:8px 4px; text-align:center;">
+                <div style="font-size:1.2rem;">{p['emoji']}</div>
+                <div style="font-size:0.75rem; font-weight:700; color:{p['color'] if is_on else '#555'};">{p['name']}</div>
+                <div class="card-desc">{p['desc']}</div>
+            </div>
+        """, unsafe_allow_html=True)
+        if st.button("ON" if is_on else "OFF", key=f"t_{i}", use_container_width=True, type="primary" if is_on else "secondary"):
+            st.session_state.personas[i]["active"] = not is_on; st.rerun()
 
 st.divider()
 
-# 대화 내용 출력
+# 대화창
 for turn in st.session_state.history:
-    with st.chat_message("user"):
-        st.write(turn["user"])
+    with st.chat_message("user"): st.write(turn["user"])
     for p_name, ans in turn["responses"].items():
         p_data = next(x for x in st.session_state.personas if x["name"] == p_name)
-        with st.chat_message(p_name, avatar=p_data["emoji"]):
-            st.markdown(f"**{p_name}**: {ans}")
+        st.markdown(f'<div class="ai-name" style="color:{p_data["color"]}">{p_data["emoji"]} {p_name}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="bubble-ai">{ans}</div>', unsafe_allow_html=True)
 
-# 입력창
+# 입력
 if prompt := st.chat_input("메시지를 입력하세요..."):
-    if not any(p["active"] for p in st.session_state.personas):
-        st.warning("대화 상대를 한 명 이상 선택해주세요.")
+    active_p = [p for p in st.session_state.personas if p["active"]]
+    if not active_p:
+        st.warning("상대를 선택해주세요.")
     else:
         st.session_state.history.append({"user": prompt, "responses": {}})
-        with st.spinner("AI가 생각 중입니다..."):
-            res = run_chat(st.session_state.history, prompt)
-            st.session_state.history[-1]["responses"] = res
+        with st.spinner("데이터 분석 및 답변 생성 중..."):
+            web_data = web_search(prompt) + wikipedia_search(prompt)
+            # 순차적 처리 (Rate Limit 방어 핵심)
+            res_dict = {}
+            for i, p in enumerate(active_p):
+                name, text = ask_one(p, st.session_state.history, web_data, i)
+                res_dict[name] = text
+            st.session_state.history[-1]["responses"] = res_dict
         st.rerun()
