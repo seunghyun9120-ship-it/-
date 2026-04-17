@@ -1,6 +1,5 @@
 streamlit
 openai
 python-dotenv
-duckduckgo_search
+duckduckgo-search>=6.0.0
 requests
-praw
